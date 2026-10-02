@@ -114,11 +114,34 @@
           <div class="setting-row"><div><div class="setting-label">Clear Browsing Data</div><div class="setting-desc">Recent sites and local settings</div></div><button class="btn" id="clearDataBtn">Clear</button></div>
         </div>
         <div class="setting-group"><h3>About</h3>
+          <div class="setting-row">
+            <div>
+              <div class="setting-label">Proxy version</div>
+              <div class="setting-desc">Nebula, Scramjet, and transport info</div>
+            </div>
+            <button class="btn" id="versionBtn" type="button">Show version</button>
+          </div>
           <p class="about-text"><strong>Nebula</strong> is a redesigned Scramjet browser inspired by Cherri.<br><br>Powered by <a href="https://github.com/MercuryWorkshop/scramjet" target="_blank" rel="noopener">Scramjet</a> (Mercury Workshop) and templates by <a href="https://github.com/x8rr/scramjet-templates" target="_blank" rel="noopener">x8rr</a>.<br><br>This proxy does <strong>not</strong> provide anonymity. Use responsibly.</p>
         </div>
       </div>
     </div>
   </div>
+  
+  <div class="version-overlay" id="versionModal">
+    <div class="version-panel">
+      <div class="version-header">
+        <h2>About Nebula</h2>
+        <button class="settings-close" id="versionClose" type="button">×</button>
+      </div>
+      <div class="version-body" id="versionBody">
+        <p>Loading…</p>
+      </div>
+      <div class="version-actions">
+        <button class="btn btn-primary" id="versionOk" type="button">OK</button>
+      </div>
+    </div>
+  </div>
+
   <div class="sw-status" id="swStatus"></div>
   <script src="./scramjet/scramjet.js"></script>
   <script src="./controller/controller.api.js"></script>

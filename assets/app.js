@@ -1,4 +1,3 @@
-
 (function () {
   'use strict';
 
@@ -11,6 +10,7 @@
     wisp: 'wss://wisp.mercurywork.shop/',
     customWisp: ''
   };
+  const NEBULA_VERSION = '1.1.0';
   let settings = { ...DEFAULT_SETTINGS };
   try {
     const saved = localStorage.getItem('nebula-settings');
@@ -384,12 +384,85 @@
 
   async function reconnectTransport() {
     const statusEl = document.getElementById('swStatus');
-    statusEl.textContent = 'Reconnecting…';
-    statusEl.className = 'sw-status visible';
+    if (statusEl) {
+      statusEl.textContent = 'Applying settings (' + (settings.transport || 'epoxy') + ' / ' + (settings.backend || 'scramjet') + ')…';
+      statusEl.className = 'sw-status visible';
+    }
     scramjetReady = false;
     scramjet = null;
-    await initScramjet();
+    // Drop existing frames' scramjet handles so they rebuild with new transport
+    tabs.forEach(t => { t.frame = null; });
+    try {
+      await initScramjet();
+      if (statusEl && scramjetReady) {
+        statusEl.textContent = 'Settings applied — ' + (settings.transport || 'epoxy') + ' · ' + (settings.backend || 'scramjet');
+        statusEl.className = 'sw-status visible ok';
+        setTimeout(() => statusEl.classList.remove('visible'), 2500);
+      }
+    } catch (e) {
+      console.error(e);
+    }
   }
+
+  function getProxyVersionInfo() {
+    let sj = 'unknown';
+    try {
+      if (typeof $scramjet !== 'undefined' && $scramjet.versionInfo?.version) {
+        sj = $scramjet.versionInfo.version;
+      } else if (typeof $scramjet !== 'undefined' && $scramjet.version) {
+        sj = String($scramjet.version);
+      }
+    } catch (_) {}
+    let ctrl = 'unknown';
+    try {
+      if (typeof $scramjetController !== 'undefined' && $scramjetController.version) {
+        ctrl = String($scramjetController.version);
+      }
+    } catch (_) {}
+    const wisp = settings.wisp === 'custom' ? (settings.customWisp || 'custom') : (settings.wisp || '—');
+    return {
+      nebula: NEBULA_VERSION,
+      scramjet: sj,
+      controller: ctrl,
+      backend: settings.backend || 'scramjet',
+      transport: settings.transport || 'epoxy',
+      wisp: wisp,
+      ready: !!scramjetReady
+    };
+  }
+
+  function showVersionPopup() {
+    const modal = document.getElementById('versionModal');
+    const body = document.getElementById('versionBody');
+    if (!modal || !body) {
+      const v = getProxyVersionInfo();
+      alert('Nebula ' + v.nebula + '\nScramjet ' + v.scramjet + '\nTransport: ' + v.transport + '\nBackend: ' + v.backend);
+      return;
+    }
+    const v = getProxyVersionInfo();
+    body.innerHTML =
+      '<div class="ver-row"><span>Nebula</span><span class="ver-val">' + escapeHtml(v.nebula) + '</span></div>' +
+      '<div class="ver-row"><span>Scramjet</span><span class="ver-val">' + escapeHtml(v.scramjet) + '</span></div>' +
+      '<div class="ver-row"><span>Controller</span><span class="ver-val">' + escapeHtml(v.controller) + '</span></div>' +
+      '<div class="ver-row"><span>Backend</span><span class="ver-val">' + escapeHtml(v.backend) + '</span></div>' +
+      '<div class="ver-row"><span>Transport</span><span class="ver-val">' + escapeHtml(v.transport) + '</span></div>' +
+      '<div class="ver-row"><span>Wisp</span><span class="ver-val">' + escapeHtml(v.wisp) + '</span></div>' +
+      '<div class="ver-row"><span>Proxy status</span><span class="ver-val">' + (v.ready ? 'Ready' : 'Not ready') + '</span></div>';
+    modal.classList.add('visible');
+  }
+
+  function hideVersionPopup() {
+    document.getElementById('versionModal')?.classList.remove('visible');
+  }
+
+  function applyProxySettingChange(needsReconnect) {
+    saveSettings();
+    if (needsReconnect) {
+      // Transport / Wisp require a full reconnect; backend only affects navigate()
+      reconnectTransport();
+    }
+  }
+
 
   function showHome(show) {
     document.getElementById('homePage').classList.toggle('hidden', !show);
@@ -694,24 +767,42 @@
   on('settingBackend', 'change', e => {
     settings.backend = e.target.value;
     saveSettings();
+    // Backend is used on next navigation — no full reconnect required
+    const statusEl = document.getElementById('swStatus');
+    if (statusEl) {
+      statusEl.textContent = 'Backend set to ' + settings.backend + ' (applies on next load)';
+      statusEl.className = 'sw-status visible ok';
+      setTimeout(() => statusEl.classList.remove('visible'), 2000);
+    }
   });
   on('settingTransport', 'change', e => {
     settings.transport = e.target.value;
-    saveSettings();
+    applyProxySettingChange(true); // reconnect with new transport
   });
   on('settingWisp', 'change', e => {
     settings.wisp = e.target.value;
     const row = document.getElementById('customWispRow');
     if (row) row.style.display = e.target.value === 'custom' ? '' : 'none';
-    saveSettings();
+    if (e.target.value !== 'custom') {
+      applyProxySettingChange(true);
+    } else {
+      saveSettings();
+    }
   });
   on('settingCustomWisp', 'change', e => {
     settings.customWisp = e.target.value.trim();
     settings.wisp = 'custom';
-    saveSettings();
+    if (settings.customWisp) applyProxySettingChange(true);
+    else saveSettings();
   });
   on('reconnectBtn', 'click', () => {
     reconnectTransport();
+  });
+  on('versionBtn', 'click', () => showVersionPopup());
+  on('versionClose', 'click', () => hideVersionPopup());
+  on('versionOk', 'click', () => hideVersionPopup());
+  on('versionModal', 'click', e => {
+    if (e.target === document.getElementById('versionModal')) hideVersionPopup();
   });
 
   // Boot UI first so clicks always work even if Scramjet fails

@@ -319,3 +319,27 @@ select:focus, .setting-input:focus { border-color: var(--purple-bright); }
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
 .no-anim * { animation: none !important; transition: none !important; }
+
+
+/* Version popup */
+.version-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.55); backdrop-filter: blur(4px);
+  z-index: 200; display: none; align-items: center; justify-content: center; padding: 20px;
+}
+.version-overlay.visible { display: flex; }
+.version-panel {
+  width: 100%; max-width: 420px; background: var(--bg-2); border: 1px solid var(--border);
+  border-radius: 16px; box-shadow: 0 24px 64px rgba(0,0,0,0.5), 0 0 40px var(--purple-glow);
+  overflow: hidden; animation: slideUp 0.25s ease;
+}
+.version-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 18px; border-bottom: 1px solid var(--border);
+}
+.version-header h2 { font-size: 17px; font-weight: 600; }
+.version-body { padding: 18px; font-size: 14px; line-height: 1.55; color: var(--text-muted); }
+.version-body strong { color: var(--text); }
+.version-body .ver-row { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid rgba(168,85,247,0.1); }
+.version-body .ver-row:last-child { border-bottom: none; }
+.version-body .ver-val { color: var(--purple-light); font-family: ui-monospace, monospace; font-size: 13px; text-align: right; }
+.version-actions { padding: 0 18px 18px; display: flex; justify-content: flex-end; }

@@ -4,23 +4,6 @@ A completely redesigned purple-themed Scramjet web browser inspired by [Cherri](
 
 **Not a color swap.** Full browser UI with tabs, home page, settings, loading states, and real Scramjet integration.
 
-**Repo:** https://github.com/mathissofun137/nebula-scramjet
-
-## Quick start
-
-```sh
-git clone https://github.com/mathissofun137/nebula-scramjet.git
-cd nebula-scramjet
-
-# Download Scramjet runtime + remaining controller files (required once)
-bash scripts/fetch-scramjet.sh
-
-# Optional: if assets/app.js is missing, copy from a local build or ask the maintainer
-# Serve locally (HTTPS or localhost required for service workers)
-python3 -m http.server 3000
-# open http://localhost:3000
-```
-
 ## Features
 
 - Dark purple / neon aesthetic with glassmorphism
@@ -31,21 +14,63 @@ python3 -m http.server 3000
 - Settings panel (search engine, animations, particles, clear data)
 - Loading progress bar and error page with technical details
 - Responsive (desktop, tablet, mobile)
-- Relative asset paths for GitHub Pages, jsDelivr, Cloudflare Pages, Netlify, Vercel
+- Relative asset paths for GitHub Pages, jsDelivr, Cloudflare Pages, Netlify, Vercel, custom domains
 
 ## Scramjet
 
-Uses Mercury Workshop Scramjet v2 (controller + service worker + Epoxy) based on [x8rr/scramjet-templates](https://github.com/x8rr/scramjet-templates).
+Uses the official Mercury Workshop Scramjet v2 architecture (controller + service worker + Epoxy transport) based on [x8rr/scramjet-templates](https://github.com/x8rr/scramjet-templates).
 
-### jsDelivr note
+- Service worker registered with a deployment-aware scope
+- Paths resolved relative to the current page (no hard-coded `/assets/...`)
+- Graceful failure UI if the SW cannot control the page
 
-Opening via `cdn.jsdelivr.net` may block full proxy behavior (service worker / MIME / scope). Prefer GitHub Pages or self-host. The UI still loads; Scramjet failures show a clear error page.
+### jsDelivr / CDN note
+
+Service workers must be same-origin and control a scope under that origin. When you open:
+
+`https://cdn.jsdelivr.net/gh/USER/REPO@main/index.html`
+
+the origin is `cdn.jsdelivr.net`. Registration may succeed, but caching, MIME types for `.wasm` / SW scripts, and path rewriting can prevent full proxy functionality.
+
+**This project detects the environment and surfaces a clear error instead of pretending the proxy works.**
+
+For reliable Scramjet:
+
+1. Prefer GitHub Pages, Cloudflare Pages, Netlify, or Vercel (same origin as your static files)
+2. Or self-host with any static server over HTTPS / localhost
+
+UI, CSS, JS, and assets still load correctly from jsDelivr; only the proxy layer may be restricted by browser/CDN rules.
+
+## Run locally
+
+```sh
+# any static server
+python3 -m http.server 3000
+# or
+npx serve .
+# or
+bunx serve .
+```
+
+Open `http://localhost:3000`. Service workers require a secure context (HTTPS or localhost).
 
 ## Deploy
 
-1. Run `bash scripts/fetch-scramjet.sh` so `scramjet/` and full `controller/` exist.
-2. Ensure `assets/app.js` is present (browser logic).
-3. Deploy the folder to any static host.
+Copy the entire folder (including `scramjet/`, `controller/`, `sw.js`, `assets/`) to your static host. No build step.
+
+### Structure
+
+```
+index.html
+sw.js
+assets/
+  styles.css
+  app.js
+controller/          # Scramjet controller (vendored)
+scramjet/
+  scramjet.js
+  scramjet.wasm
+```
 
 ## Attribution
 
@@ -57,4 +82,4 @@ This proxy does **not** provide anonymity. Use responsibly.
 
 ## License
 
-AGPL-3.0 where applicable; Scramjet follows its upstream license.
+AGPL-3.0 (consistent with Scramjet templates / Cherri lineage where applicable). Scramjet itself follows its upstream license.

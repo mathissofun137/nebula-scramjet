@@ -107,8 +107,11 @@
           <div class="setting-row" id="customWispRow" style="display:none"><div><div class="setting-label">Custom Wisp URL</div><div class="setting-desc">Must start with wss://</div></div>
             <input class="setting-input" id="settingCustomWisp" type="text" placeholder="wss://your-wisp.example/" style="min-width:180px;max-width:220px">
           </div>
-          <div class="setting-row"><div><div class="setting-label">Reconnect transport</div><div class="setting-desc">Re-init after TLS / connection errors</div></div>
-            <button class="btn" id="reconnectBtn">Reconnect</button>
+          <div class="setting-row"><div><div class="setting-label">Apply proxy settings</div><div class="setting-desc">Force reconnect with the options above</div></div>
+            <button class="btn btn-primary" id="reconnectBtn">Apply</button>
+          </div>
+          <div class="setting-row"><div><div class="setting-label">Strict Wisp</div><div class="setting-desc">If off, may fall back to other public servers</div></div>
+            <button class="toggle on" id="settingStrictWisp" type="button"></button>
           </div>
         </div>
         <div class="setting-group"><h3>Privacy</h3>

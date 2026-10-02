@@ -8,7 +8,9 @@
     backend: 'scramjet',      // scramjet | ultraviolet | auto
     transport: 'epoxy',       // epoxy | libcurl
     wisp: 'wss://wisp.mercurywork.shop/',
-    customWisp: ''
+    customWisp: '',
+    allowWispFallback: false,       // if false, ONLY the selected Wisp is used
+    allowTransportFallback: true    // epoxy may soft-fallback to libcurl on TLS fail
   };
   const NEBULA_VERSION = '1.1.0';
   let settings = { ...DEFAULT_SETTINGS };
@@ -192,19 +194,27 @@
   }
 
   function getWispUrl() {
-    if (settings.wisp === 'custom' && settings.customWisp) {
-      return settings.customWisp.trim();
+    // Always honor explicit user choice — never silently substitute another server.
+    if (settings.wisp === 'custom') {
+      const u = (settings.customWisp || '').trim();
+      if (!u) throw new Error('Custom Wisp selected but URL is empty.');
+      if (!/^wss?:\/\//i.test(u)) {
+        throw new Error('Custom Wisp must start with ws:// or wss:// (got: ' + u + ')');
+      }
+      return u;
     }
-    if (settings.wisp === 'local' || settings.wisp === 'auto') {
-      return getLocalWispUrl() || WISP_FALLBACKS[0];
+    if (settings.wisp === 'local') {
+      const local = getLocalWispUrl();
+      if (!local) {
+        throw new Error('Local Wisp not available. Run: npm start  (or pick a public Wisp in Settings).');
+      }
+      return local;
     }
-    // Default: try local first if known, else configured / public
-    const local = getLocalWispUrl();
-    if (local && (!settings.wisp || settings.wisp === 'wss://wisp.mercurywork.shop/')) {
-      // Prefer local when available unless user explicitly picked another public server
-      if (!settings._userPickedPublicWisp) return local;
+    if (settings.wisp && settings.wisp !== 'auto') {
+      return settings.wisp;
     }
-    return settings.wisp || local || WISP_FALLBACKS[0];
+    // auto / default: local if present, else first public
+    return getLocalWispUrl() || WISP_FALLBACKS[0];
   }
 
   async function detectLocalWisp() {
@@ -255,20 +265,34 @@
     return /tls handshake|UnexpectedEof|Hyper client|Connect|ssl|EOF/i.test(msg);
   }
 
+  // activeConnection tracks what is ACTUALLY in use (not just saved settings)
+  let activeConnection = { transport: null, wisp: null, kind: null };
+
   async function createTransportWithFailover(kind) {
     const preferred = kind || settings.transport || 'epoxy';
-    // On TLS failures Epoxy/Hyper often fails; Libcurl handles many sites better.
-    const kinds = preferred === 'libcurl'
-      ? ['libcurl', 'epoxy']
-      : ['epoxy', 'libcurl'];
+    // Strict: only use the transport the user selected (no silent switch)
+    const kinds = [preferred];
+    // Optional soft fallback only if user enabled it
+    if (settings.allowTransportFallback && preferred === 'epoxy') {
+      kinds.push('libcurl');
+    }
 
     const primary = getWispUrl();
-    const local = getLocalWispUrl();
-    const list = [];
-    if (local) list.push(local);
-    if (primary && !list.includes(primary)) list.push(primary);
-    for (const w of WISP_FALLBACKS) {
-      if (!list.includes(w)) list.push(w);
+    if (!primary) {
+      throw new Error('No Wisp URL configured. Set one in Settings.');
+    }
+
+    // Strict: only try the user's chosen Wisp first.
+    // Fallbacks ONLY if settings.allowWispFallback is true AND choice was not custom.
+    const list = [primary];
+    const isCustom = settings.wisp === 'custom';
+    const isExplicitPublic = settings._userPickedPublicWisp && settings.wisp !== 'local';
+    if (settings.allowWispFallback && !isCustom) {
+      const local = getLocalWispUrl();
+      if (local && !list.includes(local)) list.push(local);
+      for (const w of WISP_FALLBACKS) {
+        if (!list.includes(w)) list.push(w);
+      }
     }
 
     let lastErr = null;
@@ -277,9 +301,7 @@
         try {
           const t = await createTransport(k, wisp);
           console.log('[nebula] transport ready via', k, wisp);
-          // Remember what worked so settings UI stays accurate
-          settings.transport = k;
-          if (wisp === local) settings.wisp = 'local';
+          activeConnection = { transport: t, wisp, kind: k };
           return { transport: t, wisp, kind: k };
         } catch (e) {
           console.warn('[nebula] transport failed', k, wisp, e);
@@ -287,12 +309,14 @@
         }
       }
     }
+    activeConnection = { transport: null, wisp: null, kind: null };
+    const tried = list.join(', ');
     const hint = isTlsError(lastErr)
-      ? ' TLS handshake failed. Run `npm start` for local Wisp, or try Libcurl + another Wisp in Settings.'
-      : '';
+      ? ' TLS handshake failed on: ' + tried
+      : ' Failed endpoints: ' + tried;
     throw lastErr
       ? new Error(String(lastErr.message || lastErr) + hint)
-      : new Error('All transports/Wisp endpoints failed.' + hint);
+      : new Error('Could not connect to Wisp.' + hint);
   }
 
   function setupUltravioletConfig() {
@@ -400,8 +424,8 @@
 
       statusEl.textContent = 'Connecting transport (' + (settings.transport || 'epoxy') + ')…';
 
-      const { transport, wisp } = await createTransportWithFailover(settings.transport);
-      statusEl.textContent = 'Transport OK (' + wisp + ')…';
+      const { transport, wisp, kind } = await createTransportWithFailover(settings.transport);
+      statusEl.textContent = 'Transport OK: ' + (kind || settings.transport) + ' @ ' + wisp;
 
       const basePath = new URL('.', location.href).pathname;
       const sjPrefix = basePath + '~/sj/';
@@ -425,9 +449,11 @@
       // Best-effort UV config for dual mode
       try { await initUltraviolet(); } catch (e) { console.warn('UV init', e); }
 
-      statusEl.textContent = 'Ready (' + (settings.transport || 'epoxy') + ')';
+      const usedWisp = (activeConnection && activeConnection.wisp) || '';
+      const usedKind = (activeConnection && activeConnection.kind) || settings.transport || 'epoxy';
+      statusEl.textContent = 'Ready: ' + usedKind + (usedWisp ? ' @ ' + usedWisp : '');
       statusEl.className = 'sw-status visible ok';
-      setTimeout(() => { statusEl.classList.remove('visible'); }, 2500);
+      setTimeout(() => { statusEl.classList.remove('visible'); }, 4000);
 
       tabs.forEach(t => {
         if (!t.frame && t.iframe) {
@@ -450,23 +476,34 @@
 
   async function reconnectTransport() {
     const statusEl = document.getElementById('swStatus');
+    let targetWisp = '(resolving…)';
+    try { targetWisp = getWispUrl(); } catch (e) { targetWisp = String(e.message || e); }
     if (statusEl) {
-      statusEl.textContent = 'Applying settings (' + (settings.transport || 'epoxy') + ' / ' + (settings.backend || 'scramjet') + ')…';
+      statusEl.textContent = 'Connecting ' + (settings.transport || 'epoxy') + ' → ' + targetWisp + '…';
       statusEl.className = 'sw-status visible';
     }
     scramjetReady = false;
     scramjet = null;
-    // Drop existing frames' scramjet handles so they rebuild with new transport
+    activeConnection = { transport: null, wisp: null, kind: null };
     tabs.forEach(t => { t.frame = null; });
     try {
       await initScramjet();
       if (statusEl && scramjetReady) {
-        statusEl.textContent = 'Settings applied — ' + (settings.transport || 'epoxy') + ' · ' + (settings.backend || 'scramjet');
+        const used = activeConnection.wisp || targetWisp;
+        const kind = activeConnection.kind || settings.transport;
+        statusEl.textContent = 'Connected: ' + kind + ' @ ' + used;
         statusEl.className = 'sw-status visible ok';
-        setTimeout(() => statusEl.classList.remove('visible'), 2500);
+        setTimeout(() => statusEl.classList.remove('visible'), 4000);
+      } else if (statusEl && !scramjetReady) {
+        statusEl.textContent = 'Connect failed — check Wisp URL / transport';
+        statusEl.className = 'sw-status visible error';
       }
     } catch (e) {
       console.error(e);
+      if (statusEl) {
+        statusEl.textContent = 'Connect failed: ' + (e.message || e);
+        statusEl.className = 'sw-status visible error';
+      }
     }
   }
 
@@ -493,6 +530,8 @@
       backend: settings.backend || 'scramjet',
       transport: settings.transport || 'epoxy',
       wisp: wisp,
+      activeWisp: (activeConnection && activeConnection.wisp) || '(not connected)',
+      activeTransport: (activeConnection && activeConnection.kind) || '(not connected)',
       ready: !!scramjetReady
     };
   }
@@ -512,7 +551,9 @@
       '<div class="ver-row"><span>Controller</span><span class="ver-val">' + escapeHtml(v.controller) + '</span></div>' +
       '<div class="ver-row"><span>Backend</span><span class="ver-val">' + escapeHtml(v.backend) + '</span></div>' +
       '<div class="ver-row"><span>Transport</span><span class="ver-val">' + escapeHtml(v.transport) + '</span></div>' +
-      '<div class="ver-row"><span>Wisp</span><span class="ver-val">' + escapeHtml(v.wisp) + '</span></div>' +
+      '<div class="ver-row"><span>Wisp (setting)</span><span class="ver-val">' + escapeHtml(v.wisp) + '</span></div>' +
+      '<div class="ver-row"><span>Wisp (active)</span><span class="ver-val">' + escapeHtml(v.activeWisp) + '</span></div>' +
+      '<div class="ver-row"><span>Transport (active)</span><span class="ver-val">' + escapeHtml(v.activeTransport) + '</span></div>' +
       '<div class="ver-row"><span>Proxy status</span><span class="ver-val">' + (v.ready ? 'Ready' : 'Not ready') + '</span></div>';
     modal.classList.add('visible');
   }
@@ -796,6 +837,7 @@
     if (se) se.value = settings.searchEngine;
     document.getElementById('settingAnim')?.classList.toggle('on', settings.animations);
     document.getElementById('settingParticles')?.classList.toggle('on', settings.particles);
+    document.getElementById('settingStrictWisp')?.classList.toggle('on', !settings.allowWispFallback);
     syncProxySettingsUI();
   });
   on('settingsClose', 'click', () => {
@@ -862,36 +904,78 @@
   on('settingBackend', 'change', e => {
     settings.backend = e.target.value;
     saveSettings();
-    // Backend is used on next navigation — no full reconnect required
     const statusEl = document.getElementById('swStatus');
     if (statusEl) {
-      statusEl.textContent = 'Backend set to ' + settings.backend + ' (applies on next load)';
+      statusEl.textContent = 'Backend → ' + settings.backend + ' (next page load)';
       statusEl.className = 'sw-status visible ok';
       setTimeout(() => statusEl.classList.remove('visible'), 2000);
     }
   });
   on('settingTransport', 'change', e => {
     settings.transport = e.target.value;
-    applyProxySettingChange(true); // reconnect with new transport
+    saveSettings();
+    reconnectTransport(); // force real reconnect with this transport only
   });
   on('settingWisp', 'change', e => {
     settings.wisp = e.target.value;
     settings._userPickedPublicWisp = e.target.value !== 'local' && e.target.value !== 'auto';
     const row = document.getElementById('customWispRow');
     if (row) row.style.display = e.target.value === 'custom' ? '' : 'none';
+    saveSettings();
     if (e.target.value !== 'custom') {
-      applyProxySettingChange(true);
+      reconnectTransport(); // apply immediately
     } else {
-      saveSettings();
+      const statusEl = document.getElementById('swStatus');
+      if (statusEl) {
+        statusEl.textContent = 'Enter a custom Wisp URL, then press Enter or Apply';
+        statusEl.className = 'sw-status visible';
+      }
     }
   });
-  on('settingCustomWisp', 'change', e => {
-    settings.customWisp = e.target.value.trim();
+  function applyCustomWisp() {
+    const input = document.getElementById('settingCustomWisp');
+    const val = (input && input.value || '').trim();
+    settings.customWisp = val;
     settings.wisp = 'custom';
-    if (settings.customWisp) applyProxySettingChange(true);
-    else saveSettings();
+    settings._userPickedPublicWisp = true;
+    settings.allowWispFallback = false; // invalid URL must fail, not fall back
+    saveSettings();
+    reconnectTransport();
+  }
+  on('settingCustomWisp', 'change', () => applyCustomWisp());
+  on('settingCustomWisp', 'keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); applyCustomWisp(); }
+  });
+  on('settingStrictWisp', 'click', function () {
+    settings.allowWispFallback = !settings.allowWispFallback;
+    this.classList.toggle('on', !settings.allowWispFallback); // on = strict
+    saveSettings();
+    const statusEl = document.getElementById('swStatus');
+    if (statusEl) {
+      statusEl.textContent = settings.allowWispFallback
+        ? 'Wisp fallback ON (may use other servers)'
+        : 'Strict Wisp ON (only your chosen server)';
+      statusEl.className = 'sw-status visible';
+      setTimeout(() => statusEl.classList.remove('visible'), 2500);
+    }
   });
   on('reconnectBtn', 'click', () => {
+    // Force-apply whatever is currently in the form fields
+    const tr = document.getElementById('settingTransport');
+    const wi = document.getElementById('settingWisp');
+    const cu = document.getElementById('settingCustomWisp');
+    const be = document.getElementById('settingBackend');
+    if (tr) settings.transport = tr.value;
+    if (be) settings.backend = be.value;
+    if (wi) {
+      settings.wisp = wi.value;
+      settings._userPickedPublicWisp = wi.value !== 'local' && wi.value !== 'auto';
+    }
+    if (cu && settings.wisp === 'custom') {
+      settings.customWisp = cu.value.trim();
+      settings.allowWispFallback = false;
+    }
+    saveSettings();
     reconnectTransport();
   });
   on('versionBtn', 'click', () => showVersionPopup());

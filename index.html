@@ -84,9 +84,17 @@
         <div class="setting-group"><h3>Proxy</h3>
           <div class="setting-row"><div><div class="setting-label">Backend</div><div class="setting-desc">Scramjet, Ultraviolet, or Auto</div></div>
             <select id="settingBackend">
-              <option value="scramjet">Scramjet</option>
+              <option value="auto">Auto (Scramjet → Simple)</option>
+              <option value="simple">Simple (reliable reader proxy)</option>
+              <option value="scramjet">Scramjet only</option>
               <option value="ultraviolet">Ultraviolet</option>
-              <option value="auto">Auto (Scramjet → UV)</option>
+            </select>
+          </div>
+          <div class="setting-row"><div><div class="setting-label">Simple proxy provider</div><div class="setting-desc">Used by Simple / Auto fallback</div></div>
+            <select id="settingSimpleProxy">
+              <option value="jina">Jina Reader (recommended)</option>
+              <option value="allorigins">AllOrigins</option>
+              <option value="corsproxy">corsproxy.io</option>
             </select>
           </div>
           <div class="setting-row"><div><div class="setting-label">Transport</div><div class="setting-desc">Network stack for Scramjet</div></div>

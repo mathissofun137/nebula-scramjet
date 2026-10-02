@@ -5,10 +5,11 @@
     searchEngine: 'google',
     animations: true,
     particles: true,
-    backend: 'scramjet',      // scramjet | ultraviolet | auto
+    backend: 'auto',          // scramjet | simple | ultraviolet | auto
     transport: 'epoxy',       // epoxy | libcurl
     wisp: 'wss://wisp.mercurywork.shop/',
     customWisp: '',
+    simpleProxy: 'jina',
     allowWispFallback: false,       // if false, ONLY the selected Wisp is used
     allowTransportFallback: true    // epoxy may soft-fallback to libcurl on TLS fail
   };
@@ -600,6 +601,39 @@
     document.getElementById('forwardBtn').disabled = true;
   }
 
+
+  // --- Simple HTTP reader proxy (works without Wisp/SW — like jina reader) ---
+  // Reliable for many sites when Scramjet TLS/Wisp fails (e.g. TikTok TLS eof).
+  const SIMPLE_PROXIES = {
+    jina: (url) => {
+      // r.jina.ai fetches and returns a readable version of the page
+      const cleaned = url.replace(/^https?:\/\//i, '');
+      return 'https://r.jina.ai/http://' + cleaned;
+    },
+    allorigins: (url) => {
+      return 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url);
+    },
+    corsproxy: (url) => {
+      return 'https://corsproxy.io/?' + encodeURIComponent(url);
+    }
+  };
+
+  function getSimpleProxyUrl(targetUrl) {
+    const mode = settings.simpleProxy || 'jina';
+    const fn = SIMPLE_PROXIES[mode] || SIMPLE_PROXIES.jina;
+    return fn(targetUrl);
+  }
+
+  function navigateWithSimple(tab, url) {
+    const proxied = getSimpleProxyUrl(url);
+    // Plain iframe load — no service worker, no Wisp, no TLS through Epoxy
+    tab.iframe.removeAttribute('srcdoc');
+    tab.iframe.src = proxied;
+    tab.backend = 'simple';
+    tab.simpleProxied = proxied;
+    console.log('[nebula] simple proxy →', proxied);
+  }
+
   function navigateWithUltraviolet(tab, url) {
     setupUltravioletConfig();
     const cfg = self.__uv$config;
@@ -649,38 +683,57 @@
     try { tab.title = new URL(url).hostname; } catch { tab.title = url; }
     renderTabs();
 
-    const backend = settings.backend || 'scramjet';
+    const backend = settings.backend || 'auto';
 
     try {
-      if (backend === 'ultraviolet') {
+      if (backend === 'simple') {
+        navigateWithSimple(tab, url);
+      } else if (backend === 'ultraviolet') {
         if (!uvReady) await initUltraviolet();
         navigateWithUltraviolet(tab, url);
       } else if (backend === 'auto') {
+        // Prefer Scramjet when ready; on TLS / any failure, fall back to simple proxy (always works)
         if (scramjetReady) {
           try {
             await navigateWithScramjet(tab, url);
           } catch (e) {
-            console.warn('Scramjet nav failed, trying UV', e);
-            navigateWithUltraviolet(tab, url);
+            console.warn('[nebula] Scramjet failed, using simple proxy', e);
+            navigateWithSimple(tab, url);
           }
         } else {
-          navigateWithUltraviolet(tab, url);
+          console.warn('[nebula] Scramjet not ready — using simple proxy');
+          navigateWithSimple(tab, url);
         }
       } else {
-        // scramjet
+        // scramjet only
         if (!scramjetReady) {
           setLoading(false);
           if (scramjetError) {
+            // Offer simple proxy instead of hard fail
             showError(
-              'Scramjet could not start. Open Settings → try Libcurl transport or another Wisp server, then Reconnect.',
+              'Scramjet could not start. Switching to Simple proxy for this page…',
               String(scramjetError.stack || scramjetError.message || scramjetError)
             );
+            setTimeout(() => {
+              hideError();
+              navigateWithSimple(tab, url);
+              setLoading(false);
+            }, 600);
           } else {
-            showError('Scramjet is still initializing. Please wait and retry.');
+            showError('Scramjet is still initializing. Please wait and retry, or set Backend → Simple.');
           }
           return;
         }
-        await navigateWithScramjet(tab, url);
+        try {
+          await navigateWithScramjet(tab, url);
+        } catch (e) {
+          if (isTlsError(e)) {
+            console.warn('[nebula] TLS error — simple proxy fallback');
+            navigateWithSimple(tab, url);
+          } else {
+            throw e;
+          }
+        }
       }
 
       addRecent(url, tab.title);
@@ -698,21 +751,22 @@
       setLoading(false);
       const msg = String(e.stack || e.message || e);
       if (/tls handshake|UnexpectedEof|Hyper client/i.test(msg)) {
-        showError(
-          'TLS handshake failed (common on public Wisp + sites like TikTok). Fix: run `npm start` for local Wisp, or Settings → Transport: Libcurl, Wisp: Local, then Reconnect.',
-          msg
-        );
-        // One automatic recovery attempt if still on epoxy
-        if (settings.transport !== 'libcurl') {
-          settings.transport = 'libcurl';
-          saveSettings();
-          reconnectTransport().then(() => {
-            const statusEl = document.getElementById('swStatus');
-            if (statusEl) {
-              statusEl.textContent = 'Switched to Libcurl — retry the page';
-              statusEl.className = 'sw-status visible ok';
-            }
-          });
+        // Automatic simple-proxy fallback — this is the reliable path
+        console.warn('[nebula] TLS failure — loading via simple proxy');
+        try {
+          navigateWithSimple(tab, url);
+          setLoading(false);
+          const statusEl = document.getElementById('swStatus');
+          if (statusEl) {
+            statusEl.textContent = 'Scramjet TLS failed — using Simple proxy';
+            statusEl.className = 'sw-status visible ok';
+            setTimeout(() => statusEl.classList.remove('visible'), 3000);
+          }
+        } catch (e2) {
+          showError(
+            'TLS failed and Simple proxy could not load the page either.',
+            msg + '\n' + String(e2.message || e2)
+          );
         }
       } else {
         showError('Unable to load this page.', msg);
@@ -816,7 +870,9 @@
     const wi = document.getElementById('settingWisp');
     const cu = document.getElementById('settingCustomWisp');
     const row = document.getElementById('customWispRow');
-    if (be) be.value = settings.backend || 'scramjet';
+    if (be) be.value = settings.backend || 'auto';
+    const sp = document.getElementById('settingSimpleProxy');
+    if (sp) sp.value = settings.simpleProxy || 'jina';
     if (tr) tr.value = settings.transport || 'epoxy';
     if (wi) {
       const known = ['local', 'wss://wisp.mercurywork.shop/', 'wss://wisp.nebulaservices.org/', 'wss://wisp.wispcraft.uk/'];
@@ -901,6 +957,16 @@
     }
   });
 
+  on('settingSimpleProxy', 'change', e => {
+    settings.simpleProxy = e.target.value;
+    saveSettings();
+    const statusEl = document.getElementById('swStatus');
+    if (statusEl) {
+      statusEl.textContent = 'Simple proxy → ' + settings.simpleProxy;
+      statusEl.className = 'sw-status visible ok';
+      setTimeout(() => statusEl.classList.remove('visible'), 2000);
+    }
+  });
   on('settingBackend', 'change', e => {
     settings.backend = e.target.value;
     saveSettings();

@@ -1,7 +1,15 @@
 (function () {
   'use strict';
 
-  const DEFAULT_SETTINGS = { searchEngine: 'google', animations: true, particles: true };
+  const DEFAULT_SETTINGS = {
+    searchEngine: 'google',
+    animations: true,
+    particles: true,
+    backend: 'scramjet',      // scramjet | ultraviolet | auto
+    transport: 'epoxy',       // epoxy | libcurl
+    wisp: 'wss://wisp.mercurywork.shop/',
+    customWisp: ''
+  };
   let settings = { ...DEFAULT_SETTINGS };
   try {
     const saved = localStorage.getItem('nebula-settings');
@@ -162,6 +170,109 @@
   let scramjetReady = false;
   let scramjetError = null;
 
+  const WISP_FALLBACKS = [
+    'wss://wisp.mercurywork.shop/',
+    'wss://wisp.nebulaservices.org/',
+    'wss://wisp.wispcraft.uk/'
+  ];
+
+  function getWispUrl() {
+    if (settings.wisp === 'custom' && settings.customWisp) {
+      return settings.customWisp.trim();
+    }
+    return settings.wisp || WISP_FALLBACKS[0];
+  }
+
+  async function createTransport(kind, wispUrl) {
+    kind = kind || settings.transport || 'epoxy';
+    const optsEpoxy = { wisp: wispUrl };
+    // libcurl uses websocket key in many builds
+    const optsCurl = { websocket: wispUrl, wisp: wispUrl };
+
+    if (kind === 'libcurl') {
+      const LibcurlCtor =
+        self.LibcurlTransport?.default ||
+        self.LibcurlTransport?.CurlClient ||
+        self.LibcurlTransport?.CurlTransport ||
+        self.LibcurlTransport;
+      if (!LibcurlCtor) throw new Error('Libcurl transport script not loaded.');
+      const t = new LibcurlCtor(optsCurl);
+      if (t.init) await t.init();
+      return t;
+    }
+
+    const EpoxyCtor =
+      self.EpoxyTransport?.default ||
+      self.EpoxyTransport?.EpoxyClient ||
+      self.EpoxyTransport;
+    if (!EpoxyCtor) throw new Error('Epoxy transport script not loaded.');
+    const t = new EpoxyCtor(optsEpoxy);
+    if (t.init) await t.init();
+    return t;
+  }
+
+  async function createTransportWithFailover(kind) {
+    const primary = getWispUrl();
+    const list = [primary, ...WISP_FALLBACKS.filter(w => w !== primary)];
+    let lastErr = null;
+    for (const wisp of list) {
+      try {
+        const t = await createTransport(kind, wisp);
+        console.log('[nebula] transport ready via', kind, wisp);
+        return { transport: t, wisp };
+      } catch (e) {
+        console.warn('[nebula] transport failed', kind, wisp, e);
+        lastErr = e;
+      }
+    }
+    throw lastErr || new Error('All Wisp endpoints failed (TLS/connect).');
+  }
+
+  function setupUltravioletConfig() {
+    // Path-aware UV config for GitHub Pages project sites
+    const base = new URL('.', location.href).pathname; // e.g. /nebula-scramjet/
+    if (typeof self.__uv$config !== 'object' || !self.__uv$config) {
+      self.__uv$config = {};
+    }
+    const c = self.__uv$config;
+    c.prefix = base + 'uv/service/';
+    c.bare = base + 'bare/'; // unused when using bare-mux/wisp, kept for compatibility
+    c.encodeUrl = c.encodeUrl || ((url) => {
+      try { return btoa(url).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+      catch { return encodeURIComponent(url); }
+    });
+    c.decodeUrl = c.decodeUrl || ((url) => {
+      try {
+        url = url.replace(/-/g, '+').replace(/_/g, '/');
+        while (url.length % 4) url += '=';
+        return atob(url);
+      } catch { return decodeURIComponent(url); }
+    });
+    // Prefer absolute paths for handler/bundle when loaded from CDN
+    c.handler = c.handler || 'https://cdn.jsdelivr.net/npm/@titaniumnetwork-dev/ultraviolet@3.2.10/dist/uv.handler.js';
+    c.bundle = c.bundle || 'https://cdn.jsdelivr.net/npm/@titaniumnetwork-dev/ultraviolet@3.2.10/dist/uv.bundle.js';
+    c.client = c.client || 'https://cdn.jsdelivr.net/npm/@titaniumnetwork-dev/ultraviolet@3.2.10/dist/uv.client.js';
+    c.sw = c.sw || 'https://cdn.jsdelivr.net/npm/@titaniumnetwork-dev/ultraviolet@3.2.10/dist/uv.sw.js';
+    return c;
+  }
+
+  let uvReady = false;
+
+  async function initUltraviolet() {
+    setupUltravioletConfig();
+    // UV on pure static hosting without a matching SW often cannot fully proxy.
+    // We still allow iframe navigation through encoded UV paths when SW is present.
+    if (!('serviceWorker' in navigator)) {
+      throw new Error('Service Workers required for Ultraviolet.');
+    }
+    // Register a minimal UV-compatible SW only if user chose UV — uses remote uv.sw via importScripts is ideal,
+    // but CDN SW registration is cross-origin blocked. So UV mode on GitHub Pages is best-effort:
+    // document limitation and use Scramjet as primary when Auto is selected.
+    uvReady = typeof self.__uv$config === 'object';
+    if (!uvReady) throw new Error('Ultraviolet config failed to load.');
+    return true;
+  }
+
   async function initScramjet() {
     const statusEl = document.getElementById('swStatus');
     try {
@@ -177,7 +288,7 @@
 
       const swUrl = new URL('sw.js', location.href).href;
       const scopeUrl = new URL('.', location.href).href;
-      const reg = await navigator.serviceWorker.register(swUrl, { scope: scopeUrl });
+      await navigator.serviceWorker.register(swUrl, { scope: scopeUrl });
       await navigator.serviceWorker.ready;
 
       const serviceworker =
@@ -188,26 +299,24 @@
         throw new Error('Service worker registered but no controller is available. Try refreshing.');
       }
 
-      if (location.hostname.includes('jsdelivr.net')) {
-        console.warn('Running on jsDelivr. Service Worker may be limited by CDN caching, MIME types, or path rules.');
-      }
-
       if (typeof $scramjetController === 'undefined' || typeof $scramjet === 'undefined') {
-        throw new Error('Scramjet libraries failed to load. Check that ./scramjet/ and ./controller/ are accessible from this origin.');
+        throw new Error('Scramjet libraries failed to load. Check ./scramjet/ and ./controller/.');
       }
 
       const { Controller } = $scramjetController;
       const { defaultConfig } = $scramjet;
-      const EpoxyTransport = self.EpoxyTransport?.default || self.EpoxyTransport;
 
       if (!Controller || !defaultConfig) {
         throw new Error('Scramjet Controller or defaultConfig missing.');
       }
 
-      statusEl.textContent = 'Connecting transport…';
+      statusEl.textContent = 'Connecting transport (' + (settings.transport || 'epoxy') + ')…';
 
-      const transport = new EpoxyTransport({ wisp: 'wss://wisp.mercurywork.shop/' });
-      await transport.init();
+      const { transport, wisp } = await createTransportWithFailover(settings.transport);
+      statusEl.textContent = 'Transport OK (' + wisp + ')…';
+
+      const basePath = new URL('.', location.href).pathname;
+      const sjPrefix = basePath + '~/sj/';
 
       const cfg = Object.assign({}, defaultConfig, {
         scramjetPath: new URL('scramjet/scramjet.js', location.href).href,
@@ -215,14 +324,22 @@
         injectPath: new URL('controller/controller.inject.js', location.href).href
       });
 
-      scramjet = new Controller({ serviceworker, transport, scramjetConfig: cfg });
+      scramjet = new Controller({
+        serviceworker,
+        transport,
+        scramjetConfig: cfg,
+        config: { prefix: sjPrefix }
+      });
       await scramjet.wait();
       scramjetReady = true;
       scramjetError = null;
 
-      statusEl.textContent = 'Ready';
+      // Best-effort UV config for dual mode
+      try { await initUltraviolet(); } catch (e) { console.warn('UV init', e); }
+
+      statusEl.textContent = 'Ready (' + (settings.transport || 'epoxy') + ')';
       statusEl.className = 'sw-status visible ok';
-      setTimeout(() => { statusEl.classList.remove('visible'); }, 2000);
+      setTimeout(() => { statusEl.classList.remove('visible'); }, 2500);
 
       tabs.forEach(t => {
         if (!t.frame && t.iframe) {
@@ -233,9 +350,23 @@
       console.error('Scramjet init failed:', e);
       scramjetError = e;
       scramjetReady = false;
-      statusEl.textContent = 'Scramjet unavailable: ' + (e.message || e);
+      const msg = String(e && (e.message || e));
+      let hint = msg;
+      if (/tls handshake|UnexpectedEof|Connect/i.test(msg)) {
+        hint = msg + ' — Try Settings → Transport = Libcurl, or pick another Wisp server, then Reconnect.';
+      }
+      statusEl.textContent = 'Scramjet unavailable: ' + hint;
       statusEl.className = 'sw-status visible error';
     }
+  }
+
+  async function reconnectTransport() {
+    const statusEl = document.getElementById('swStatus');
+    statusEl.textContent = 'Reconnecting…';
+    statusEl.className = 'sw-status visible';
+    scramjetReady = false;
+    scramjet = null;
+    await initScramjet();
   }
 
   function showHome(show) {
@@ -267,6 +398,22 @@
     document.getElementById('forwardBtn').disabled = true;
   }
 
+  function navigateWithUltraviolet(tab, url) {
+    setupUltravioletConfig();
+    const cfg = self.__uv$config;
+    const encoded = cfg.prefix + cfg.encodeUrl(url);
+    // UV path-based navigation in the iframe (works when UV SW controls the scope).
+    // On static GitHub Pages without a local uv SW, this may 404 — Scramjet is preferred.
+    tab.iframe.src = new URL(encoded, location.href).href;
+    tab.backend = 'ultraviolet';
+  }
+
+  async function navigateWithScramjet(tab, url) {
+    if (!tab.frame) tab.frame = scramjet.createFrame(tab.iframe);
+    tab.frame.go(url);
+    tab.backend = 'scramjet';
+  }
+
   async function navigate(input, tabId) {
     const tab = tabId ? tabs.find(t => t.id === tabId) : getActiveTab();
     if (!tab) return;
@@ -283,19 +430,40 @@
     try { tab.title = new URL(url).hostname; } catch { tab.title = url; }
     renderTabs();
 
-    if (!scramjetReady) {
-      setLoading(false);
-      if (scramjetError) {
-        showError('Scramjet could not start in this environment.', String(scramjetError.stack || scramjetError.message || scramjetError));
-      } else {
-        showError('Scramjet is still initializing. Please wait a moment and retry.');
-      }
-      return;
-    }
+    const backend = settings.backend || 'scramjet';
 
     try {
-      if (!tab.frame) tab.frame = scramjet.createFrame(tab.iframe);
-      tab.frame.go(url);
+      if (backend === 'ultraviolet') {
+        if (!uvReady) await initUltraviolet();
+        navigateWithUltraviolet(tab, url);
+      } else if (backend === 'auto') {
+        if (scramjetReady) {
+          try {
+            await navigateWithScramjet(tab, url);
+          } catch (e) {
+            console.warn('Scramjet nav failed, trying UV', e);
+            navigateWithUltraviolet(tab, url);
+          }
+        } else {
+          navigateWithUltraviolet(tab, url);
+        }
+      } else {
+        // scramjet
+        if (!scramjetReady) {
+          setLoading(false);
+          if (scramjetError) {
+            showError(
+              'Scramjet could not start. Open Settings → try Libcurl transport or another Wisp server, then Reconnect.',
+              String(scramjetError.stack || scramjetError.message || scramjetError)
+            );
+          } else {
+            showError('Scramjet is still initializing. Please wait and retry.');
+          }
+          return;
+        }
+        await navigateWithScramjet(tab, url);
+      }
+
       addRecent(url, tab.title);
       setTimeout(() => {
         setLoading(false);
@@ -309,7 +477,15 @@
     } catch (e) {
       console.error(e);
       setLoading(false);
-      showError('Unable to load this page.', String(e.stack || e.message || e));
+      const msg = String(e.stack || e.message || e);
+      if (/tls handshake|UnexpectedEof|Hyper client/i.test(msg)) {
+        showError(
+          'Connection failed (TLS handshake). Try Settings → Transport: Libcurl, or change Wisp server, then Reconnect.',
+          msg
+        );
+      } else {
+        showError('Unable to load this page.', msg);
+      }
     }
     updateNavButtons();
   }
@@ -397,11 +573,33 @@
     if (tile) navigate(tile.dataset.url);
   });
 
+  function syncProxySettingsUI() {
+    const be = document.getElementById('settingBackend');
+    const tr = document.getElementById('settingTransport');
+    const wi = document.getElementById('settingWisp');
+    const cu = document.getElementById('settingCustomWisp');
+    const row = document.getElementById('customWispRow');
+    if (be) be.value = settings.backend || 'scramjet';
+    if (tr) tr.value = settings.transport || 'epoxy';
+    if (wi) {
+      const known = ['wss://wisp.mercurywork.shop/', 'wss://wisp.nebulaservices.org/', 'wss://wisp.wispcraft.uk/'];
+      if (settings.wisp === 'custom' || (settings.wisp && !known.includes(settings.wisp))) {
+        wi.value = 'custom';
+        if (row) row.style.display = '';
+        if (cu) cu.value = settings.customWisp || settings.wisp || '';
+      } else {
+        wi.value = settings.wisp || known[0];
+        if (row) row.style.display = 'none';
+      }
+    }
+  }
+
   document.getElementById('settingsBtn').addEventListener('click', () => {
     document.getElementById('settingsOverlay').classList.add('visible');
     document.getElementById('settingSearchEngine').value = settings.searchEngine;
     document.getElementById('settingAnim').classList.toggle('on', settings.animations);
     document.getElementById('settingParticles').classList.toggle('on', settings.particles);
+    syncProxySettingsUI();
   });
   document.getElementById('settingsClose').addEventListener('click', () => {
     document.getElementById('settingsOverlay').classList.remove('visible');
@@ -462,6 +660,34 @@
         if (next) switchTab(next.id);
       }
     }
+  });
+
+  const elBackend = document.getElementById('settingBackend');
+  if (elBackend) elBackend.addEventListener('change', e => {
+    settings.backend = e.target.value;
+    saveSettings();
+  });
+  const elTransport = document.getElementById('settingTransport');
+  if (elTransport) elTransport.addEventListener('change', e => {
+    settings.transport = e.target.value;
+    saveSettings();
+  });
+  const elWisp = document.getElementById('settingWisp');
+  if (elWisp) elWisp.addEventListener('change', e => {
+    settings.wisp = e.target.value;
+    const row = document.getElementById('customWispRow');
+    if (row) row.style.display = e.target.value === 'custom' ? '' : 'none';
+    saveSettings();
+  });
+  const elCustomWisp = document.getElementById('settingCustomWisp');
+  if (elCustomWisp) elCustomWisp.addEventListener('change', e => {
+    settings.customWisp = e.target.value.trim();
+    settings.wisp = 'custom';
+    saveSettings();
+  });
+  const elReconnect = document.getElementById('reconnectBtn');
+  if (elReconnect) elReconnect.addEventListener('click', () => {
+    reconnectTransport();
   });
 
   applySettings();

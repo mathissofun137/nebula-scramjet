@@ -81,6 +81,35 @@
           <div class="setting-row"><div><div class="setting-label">Animations</div><div class="setting-desc">Smooth transitions and effects</div></div><button class="toggle on" id="settingAnim"></button></div>
           <div class="setting-row"><div><div class="setting-label">Particle Effects</div><div class="setting-desc">Background particles on home page</div></div><button class="toggle on" id="settingParticles"></button></div>
         </div>
+        <div class="setting-group"><h3>Proxy</h3>
+          <div class="setting-row"><div><div class="setting-label">Backend</div><div class="setting-desc">Scramjet, Ultraviolet, or Auto</div></div>
+            <select id="settingBackend">
+              <option value="scramjet">Scramjet</option>
+              <option value="ultraviolet">Ultraviolet</option>
+              <option value="auto">Auto (Scramjet → UV)</option>
+            </select>
+          </div>
+          <div class="setting-row"><div><div class="setting-label">Transport</div><div class="setting-desc">Network stack for Scramjet</div></div>
+            <select id="settingTransport">
+              <option value="epoxy">Epoxy (default)</option>
+              <option value="libcurl">Libcurl</option>
+            </select>
+          </div>
+          <div class="setting-row"><div><div class="setting-label">Wisp Server</div><div class="setting-desc">WebSocket endpoint for the transport</div></div>
+            <select id="settingWisp">
+              <option value="wss://wisp.mercurywork.shop/">mercurywork.shop</option>
+              <option value="wss://wisp.nebulaservices.org/">nebulaservices</option>
+              <option value="wss://wisp.wispcraft.uk/">wispcraft</option>
+              <option value="custom">Custom…</option>
+            </select>
+          </div>
+          <div class="setting-row" id="customWispRow" style="display:none"><div><div class="setting-label">Custom Wisp URL</div><div class="setting-desc">Must start with wss://</div></div>
+            <input class="setting-input" id="settingCustomWisp" type="text" placeholder="wss://your-wisp.example/" style="min-width:180px;max-width:220px">
+          </div>
+          <div class="setting-row"><div><div class="setting-label">Reconnect transport</div><div class="setting-desc">Re-init after TLS / connection errors</div></div>
+            <button class="btn" id="reconnectBtn">Reconnect</button>
+          </div>
+        </div>
         <div class="setting-group"><h3>Privacy</h3>
           <div class="setting-row"><div><div class="setting-label">Clear Browsing Data</div><div class="setting-desc">Recent sites and local settings</div></div><button class="btn" id="clearDataBtn">Clear</button></div>
         </div>
@@ -94,6 +123,10 @@
   <script src="./scramjet/scramjet.js"></script>
   <script src="./controller/controller.api.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mercuryworkshop/epoxy-transport@3.0.1/dist/index.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mercuryworkshop/libcurl-transport@2.0.5/dist/index.js"></script>
+  <!-- Ultraviolet (optional backend) -->
+  <script src="https://cdn.jsdelivr.net/npm/@titaniumnetwork-dev/ultraviolet@3.2.10/dist/uv.bundle.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@titaniumnetwork-dev/ultraviolet@3.2.10/dist/uv.config.js"></script>
   <script src="./assets/app.js"></script>
 </body>
 </html>

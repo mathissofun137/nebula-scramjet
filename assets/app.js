@@ -74,7 +74,7 @@
   }
 
   function escapeHtml(s) {
-    return String(s).replace(/&/g,'&').replace(/</g,'<').replace(/>/g,'>').replace(/"/g,'"');
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
   function escapeAttr(s) { return escapeHtml(s).replace(/'/g, '&#39;'); }
 
@@ -258,19 +258,40 @@
 
   let uvReady = false;
 
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const existing = document.querySelector('script[src="' + src + '"]');
+      if (existing) { resolve(); return; }
+      const s = document.createElement('script');
+      s.src = src;
+      s.async = true;
+      s.onload = () => resolve();
+      s.onerror = () => reject(new Error('Failed to load ' + src));
+      document.head.appendChild(s);
+    });
+  }
+
   async function initUltraviolet() {
-    setupUltravioletConfig();
-    // UV on pure static hosting without a matching SW often cannot fully proxy.
-    // We still allow iframe navigation through encoded UV paths when SW is present.
     if (!('serviceWorker' in navigator)) {
       throw new Error('Service Workers required for Ultraviolet.');
     }
-    // Register a minimal UV-compatible SW only if user chose UV — uses remote uv.sw via importScripts is ideal,
-    // but CDN SW registration is cross-origin blocked. So UV mode on GitHub Pages is best-effort:
-    // document limitation and use Scramjet as primary when Auto is selected.
-    uvReady = typeof self.__uv$config === 'object';
-    if (!uvReady) throw new Error('Ultraviolet config failed to load.');
-    return true;
+    // Load UV only when needed — never block the main UI
+    try {
+      if (typeof Ultraviolet === 'undefined') {
+        await loadScript('https://cdn.jsdelivr.net/npm/@titaniumnetwork-dev/ultraviolet@3.2.10/dist/uv.bundle.js');
+      }
+      setupUltravioletConfig();
+      // Prefer XOR codec if available
+      if (typeof Ultraviolet !== 'undefined' && Ultraviolet.codec?.xor) {
+        self.__uv$config.encodeUrl = Ultraviolet.codec.xor.encode;
+        self.__uv$config.decodeUrl = Ultraviolet.codec.xor.decode;
+      }
+      uvReady = true;
+      return true;
+    } catch (e) {
+      uvReady = false;
+      throw e;
+    }
   }
 
   async function initScramjet() {
@@ -318,13 +339,6 @@
       const basePath = new URL('.', location.href).pathname;
       const sjPrefix = basePath + '~/sj/';
 
-      // Base path for GitHub Pages project sites, subfolders, etc.
-      // e.g. https://user.github.io/nebula-scramjet/ → "/nebula-scramjet/"
-      const basePath = new URL('.', location.href).pathname;
-      // Scramjet proxy prefix MUST stay under the SW scope (same base path).
-      // Default "/~/sj/" would hit github.io/~/sj/ and 404 on project Pages.
-      const sjPrefix = basePath + '~/sj/';
-
       const cfg = Object.assign({}, defaultConfig, {
         scramjetPath: new URL('scramjet/scramjet.js', location.href).href,
         wasmPath: new URL('scramjet/scramjet.wasm', location.href).href,
@@ -335,7 +349,6 @@
         serviceworker,
         transport,
         scramjetConfig: cfg,
-        // Override default prefix "/~/sj/" so it lives under the deployment base path
         config: { prefix: sjPrefix }
       });
       await scramjet.wait();
@@ -547,21 +560,27 @@
     if (canvas) canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
   }
 
-  document.getElementById('newTabBtn').addEventListener('click', () => createTab());
-  document.getElementById('backBtn').addEventListener('click', () => {
+  function on(id, event, handler) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener(event, handler);
+    else console.warn('[nebula] missing element #' + id);
+  }
+
+  on('newTabBtn', 'click', () => createTab());
+  on('backBtn', 'click', () => {
     const tab = getActiveTab();
     if (tab?.frame?.back) tab.frame.back();
     else if (tab?.url) showHome(true);
   });
-  document.getElementById('forwardBtn').addEventListener('click', () => {
+  on('forwardBtn', 'click', () => {
     const tab = getActiveTab();
     if (tab?.frame?.forward) tab.frame.forward();
   });
-  document.getElementById('reloadBtn').addEventListener('click', () => {
+  on('reloadBtn', 'click', () => {
     const tab = getActiveTab();
     if (tab?.url) navigate(tab.url);
   });
-  document.getElementById('homeBtn').addEventListener('click', () => {
+  on('homeBtn', 'click', () => {
     const tab = getActiveTab();
     if (tab) {
       tab.url = null; tab.title = 'New Tab';
@@ -569,14 +588,14 @@
     }
   });
 
-  document.getElementById('urlBar').addEventListener('keydown', e => {
+  on('urlBar', 'keydown', e => {
     if (e.key === 'Enter') { navigate(e.target.value); e.target.blur(); }
   });
-  document.getElementById('homeSearch').addEventListener('keydown', e => {
+  on('homeSearch', 'keydown', e => {
     if (e.key === 'Enter') navigate(e.target.value);
   });
 
-  document.getElementById('quickAccess').addEventListener('click', e => {
+  on('quickAccess', 'click', e => {
     const tile = e.target.closest('[data-url]');
     if (tile) navigate(tile.dataset.url);
   });
@@ -602,36 +621,37 @@
     }
   }
 
-  document.getElementById('settingsBtn').addEventListener('click', () => {
+  on('settingsBtn', 'click', () => {
     document.getElementById('settingsOverlay').classList.add('visible');
-    document.getElementById('settingSearchEngine').value = settings.searchEngine;
-    document.getElementById('settingAnim').classList.toggle('on', settings.animations);
-    document.getElementById('settingParticles').classList.toggle('on', settings.particles);
+    const se = document.getElementById('settingSearchEngine');
+    if (se) se.value = settings.searchEngine;
+    document.getElementById('settingAnim')?.classList.toggle('on', settings.animations);
+    document.getElementById('settingParticles')?.classList.toggle('on', settings.particles);
     syncProxySettingsUI();
   });
-  document.getElementById('settingsClose').addEventListener('click', () => {
+  on('settingsClose', 'click', () => {
     document.getElementById('settingsOverlay').classList.remove('visible');
   });
-  document.getElementById('settingsOverlay').addEventListener('click', e => {
+  on('settingsOverlay', 'click', e => {
     if (e.target === document.getElementById('settingsOverlay')) {
       document.getElementById('settingsOverlay').classList.remove('visible');
     }
   });
 
-  document.getElementById('settingSearchEngine').addEventListener('change', e => {
+  on('settingSearchEngine', 'change', e => {
     settings.searchEngine = e.target.value; saveSettings();
   });
-  document.getElementById('settingAnim').addEventListener('click', function () {
+  on('settingAnim', 'click', function () {
     settings.animations = !settings.animations;
     this.classList.toggle('on', settings.animations);
     saveSettings();
   });
-  document.getElementById('settingParticles').addEventListener('click', function () {
+  on('settingParticles', 'click', function () {
     settings.particles = !settings.particles;
     this.classList.toggle('on', settings.particles);
     saveSettings();
   });
-  document.getElementById('clearDataBtn').addEventListener('click', () => {
+  on('clearDataBtn', 'click', () => {
     recentSites = [];
     try { localStorage.removeItem('nebula-recent'); localStorage.removeItem('nebula-settings'); } catch (_) {}
     settings = { ...DEFAULT_SETTINGS };
@@ -639,18 +659,18 @@
     alert('Browsing data cleared.');
   });
 
-  document.getElementById('fullscreenBtn').addEventListener('click', () => {
+  on('fullscreenBtn', 'click', () => {
     if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
     else document.exitFullscreen?.();
   });
 
-  document.getElementById('errorRetry').addEventListener('click', () => {
+  on('errorRetry', 'click', () => {
     const tab = getActiveTab();
     if (tab?.url) navigate(tab.url);
     else if (!scramjetReady) initScramjet().then(() => { if (tab?.url) navigate(tab.url); });
   });
-  document.getElementById('errorHome').addEventListener('click', () => {
-    hideError(); document.getElementById('homeBtn').click();
+  on('errorHome', 'click', () => {
+    hideError(); document.getElementById('homeBtn')?.click();
   });
 
   document.addEventListener('keydown', e => {
@@ -659,8 +679,8 @@
       else if (e.key === 'w') { e.preventDefault(); if (activeTabId) closeTab(activeTabId); }
       else if (e.key === 'l') {
         e.preventDefault();
-        document.getElementById('urlBar').focus();
-        document.getElementById('urlBar').select();
+        document.getElementById('urlBar')?.focus();
+        document.getElementById('urlBar')?.select();
       } else if (e.key === 'Tab') {
         e.preventDefault();
         const idx = tabs.findIndex(t => t.id === activeTabId);
@@ -670,36 +690,36 @@
     }
   });
 
-  const elBackend = document.getElementById('settingBackend');
-  if (elBackend) elBackend.addEventListener('change', e => {
+  on('settingBackend', 'change', e => {
     settings.backend = e.target.value;
     saveSettings();
   });
-  const elTransport = document.getElementById('settingTransport');
-  if (elTransport) elTransport.addEventListener('change', e => {
+  on('settingTransport', 'change', e => {
     settings.transport = e.target.value;
     saveSettings();
   });
-  const elWisp = document.getElementById('settingWisp');
-  if (elWisp) elWisp.addEventListener('change', e => {
+  on('settingWisp', 'change', e => {
     settings.wisp = e.target.value;
     const row = document.getElementById('customWispRow');
     if (row) row.style.display = e.target.value === 'custom' ? '' : 'none';
     saveSettings();
   });
-  const elCustomWisp = document.getElementById('settingCustomWisp');
-  if (elCustomWisp) elCustomWisp.addEventListener('change', e => {
+  on('settingCustomWisp', 'change', e => {
     settings.customWisp = e.target.value.trim();
     settings.wisp = 'custom';
     saveSettings();
   });
-  const elReconnect = document.getElementById('reconnectBtn');
-  if (elReconnect) elReconnect.addEventListener('click', () => {
+  on('reconnectBtn', 'click', () => {
     reconnectTransport();
   });
 
-  applySettings();
-  renderRecent();
-  createTab();
-  initScramjet();
+  // Boot UI first so clicks always work even if Scramjet fails
+  try {
+    applySettings();
+    renderRecent();
+    createTab();
+  } catch (e) {
+    console.error('[nebula] boot UI error', e);
+  }
+  initScramjet().catch(e => console.error('[nebula] scramjet init', e));
 })();

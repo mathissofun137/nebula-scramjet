@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Nebula — Scramjet Browser</title>
+  <meta name="description" content="A futuristic purple Scramjet web browser">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><defs><linearGradient id='g' x1='0%' y1='0%' x2='100%' y2='100%'><stop offset='0%' stop-color='%23a855f7'/><stop offset='100%' stop-color='%238803fc'/></linearGradient></defs><circle cx='50' cy='50' r='45' fill='url(%23g)'/><text x='50' y='62' font-size='40' text-anchor='middle' fill='white' font-family='system-ui'>N</text></svg>">
+  <link rel="stylesheet" href="./assets/styles.css">
+</head>
+<body>
+  <div id="app">
+    <div class="tab-bar" id="tabBar">
+      <button class="new-tab-btn" id="newTabBtn" title="New Tab (Ctrl+T)">+</button>
+    </div>
+    <div class="toolbar">
+      <div class="nav-group">
+        <button class="nav-btn" id="backBtn" title="Back" disabled>←</button>
+        <button class="nav-btn" id="forwardBtn" title="Forward" disabled>→</button>
+        <button class="nav-btn" id="reloadBtn" title="Reload">↻</button>
+        <button class="nav-btn" id="homeBtn" title="Home">⌂</button>
+      </div>
+      <div class="url-bar-wrap">
+        <svg class="url-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input class="url-bar" id="urlBar" type="text" placeholder="Search or enter address" autocomplete="off" spellcheck="false">
+        <div class="loading-bar" id="loadingBar"></div>
+      </div>
+      <div class="nav-group">
+        <button class="nav-btn" id="settingsBtn" title="Settings">⚙</button>
+        <button class="nav-btn" id="fullscreenBtn" title="Fullscreen">⛶</button>
+      </div>
+    </div>
+    <div class="viewport-area" id="viewport">
+      <div class="home-page" id="homePage">
+        <div class="home-bg"></div>
+        <canvas id="particles"></canvas>
+        <div class="home-content">
+          <div class="logo">Nebula</div>
+          <p class="tagline">Futuristic Scramjet Browser</p>
+          <div class="home-search-wrap">
+            <span class="home-search-icon">⌕</span>
+            <input class="home-search" id="homeSearch" type="text" placeholder="Search the web or enter a URL" autocomplete="off">
+          </div>
+          <div class="quick-access" id="quickAccess">
+            <div class="qa-tile" data-url="https://google.com"><div class="qa-icon">G</div><span class="qa-label">Google</span></div>
+            <div class="qa-tile" data-url="https://youtube.com"><div class="qa-icon">▶</div><span class="qa-label">YouTube</span></div>
+            <div class="qa-tile" data-url="https://reddit.com"><div class="qa-icon">R</div><span class="qa-label">Reddit</span></div>
+            <div class="qa-tile" data-url="https://github.com"><div class="qa-icon">⌥</div><span class="qa-label">GitHub</span></div>
+            <div class="qa-tile" data-url="https://wikipedia.org"><div class="qa-icon">W</div><span class="qa-label">Wikipedia</span></div>
+            <div class="qa-tile" data-url="https://discord.com"><div class="qa-icon">D</div><span class="qa-label">Discord</span></div>
+          </div>
+          <div class="recent-section" id="recentSection" style="display:none;">
+            <div class="recent-title">Recently Visited</div>
+            <div class="recent-list" id="recentList"></div>
+          </div>
+        </div>
+      </div>
+      <div class="error-page" id="errorPage">
+        <div class="error-icon">⚠</div>
+        <div class="error-title">Unable to load this page.</div>
+        <p class="error-msg" id="errorMsg">Something went wrong while loading the page through Scramjet.</p>
+        <div class="error-actions">
+          <button class="btn btn-primary" id="errorRetry">Retry</button>
+          <button class="btn" id="errorHome">Return Home</button>
+        </div>
+        <details class="error-tech"><summary>Technical details</summary><pre id="errorTech"></pre></details>
+      </div>
+      <div id="framesContainer"></div>
+    </div>
+  </div>
+  <div class="settings-overlay" id="settingsOverlay">
+    <div class="settings-panel">
+      <div class="settings-header"><h2>Settings</h2><button class="settings-close" id="settingsClose">×</button></div>
+      <div class="settings-body">
+        <div class="setting-group"><h3>Search</h3>
+          <div class="setting-row"><div><div class="setting-label">Search Engine</div><div class="setting-desc">Used when you type a query instead of a URL</div></div>
+            <select id="settingSearchEngine"><option value="google">Google</option><option value="duckduckgo">DuckDuckGo</option><option value="bing">Bing</option><option value="brave">Brave</option></select>
+          </div>
+        </div>
+        <div class="setting-group"><h3>Appearance</h3>
+          <div class="setting-row"><div><div class="setting-label">Animations</div><div class="setting-desc">Smooth transitions and effects</div></div><button class="toggle on" id="settingAnim"></button></div>
+          <div class="setting-row"><div><div class="setting-label">Particle Effects</div><div class="setting-desc">Background particles on home page</div></div><button class="toggle on" id="settingParticles"></button></div>
+        </div>
+        <div class="setting-group"><h3>Privacy</h3>
+          <div class="setting-row"><div><div class="setting-label">Clear Browsing Data</div><div class="setting-desc">Recent sites and local settings</div></div><button class="btn" id="clearDataBtn">Clear</button></div>
+        </div>
+        <div class="setting-group"><h3>About</h3>
+          <p class="about-text"><strong>Nebula</strong> is a redesigned Scramjet browser inspired by Cherri.<br><br>Powered by <a href="https://github.com/MercuryWorkshop/scramjet" target="_blank" rel="noopener">Scramjet</a> (Mercury Workshop) and templates by <a href="https://github.com/x8rr/scramjet-templates" target="_blank" rel="noopener">x8rr</a>.<br><br>This proxy does <strong>not</strong> provide anonymity. Use responsibly.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="sw-status" id="swStatus"></div>
+  <script src="./scramjet/scramjet.js"></script>
+  <script src="./controller/controller.api.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mercuryworkshop/epoxy-transport@3.0.1/dist/index.js"></script>
+  <script src="./assets/app.js"></script>
+</body>
+</html>

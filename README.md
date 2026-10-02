@@ -1,85 +1,49 @@
-# Nebula — Futuristic Scramjet Browser
+# Nebula — Scramjet Browser
 
-A completely redesigned purple-themed Scramjet web browser inspired by [Cherri](https://github.com/x8rr/cherri).
+Futuristic purple Scramjet browser inspired by Cherri, with real browser UI.
 
-**Not a color swap.** Full browser UI with tabs, home page, settings, loading states, and real Scramjet integration.
+## Why only some sites work on GitHub Pages
+
+**Scramjet needs a Wisp server** to fetch remote sites. Public Wisp endpoints are rate-limited and often fail (TLS errors, broken pages).
+
+[Lunar v2](https://github.com/lunar-proxy/lunar-v2) works on more sites because it runs a **Node server with local Wisp**. Nebula now supports the same pattern.
+
+| Host | Local Wisp | Site compatibility |
+|------|------------|--------------------|
+| `npm start` (this repo) | Yes (`/w/`) | Best |
+| Render / Railway / VPS | Yes | Best |
+| GitHub Pages / jsDelivr | No | Limited (public Wisp only) |
+
+## Recommended: run with local Wisp
+
+```bash
+npm install
+npm start
+```
+
+Open **http://localhost:8080**
+
+Settings → Wisp should show **Local (recommended)**. That connects to `ws://localhost:8080/w/` on your machine — same approach Lunar uses.
+
+## GitHub Pages (limited)
+
+Static hosting cannot run Wisp. Expect:
+- Some sites work (simple HTML)
+- Many sites fail (TLS handshake, broken JS apps)
+
+For real use, deploy the Node server (Render, Railway, a VPS, etc.).
 
 ## Features
 
-- Dark purple / neon aesthetic with glassmorphism
-- Real browser chrome: back, forward, reload, home, URL bar, settings, fullscreen
-- Tab system (Ctrl+T / Ctrl+W / Ctrl+Tab / Ctrl+L)
-- Search or URL navigation with configurable search engines
-- Home page with quick links + recent sites (localStorage)
-- Settings panel (search engine, animations, particles, clear data)
-- Loading progress bar and error page with technical details
-- Responsive (desktop, tablet, mobile)
-- Relative asset paths for GitHub Pages, jsDelivr, Cloudflare Pages, Netlify, Vercel, custom domains
+- Purple glassmorphism browser UI
+- Tabs, URL bar, history, settings
+- Scramjet proxy with Epoxy / Libcurl transport
+- Optional Ultraviolet backend
+- Version popup
+- Settings that reconfigure the proxy
 
-## Scramjet
+## Credits
 
-Uses the official Mercury Workshop Scramjet v2 architecture (controller + service worker + Epoxy transport) based on [x8rr/scramjet-templates](https://github.com/x8rr/scramjet-templates).
-
-- Service worker registered with a deployment-aware scope
-- Paths resolved relative to the current page (no hard-coded `/assets/...`)
-- Graceful failure UI if the SW cannot control the page
-
-### jsDelivr / CDN note
-
-Service workers must be same-origin and control a scope under that origin. When you open:
-
-`https://cdn.jsdelivr.net/gh/USER/REPO@main/index.html`
-
-the origin is `cdn.jsdelivr.net`. Registration may succeed, but caching, MIME types for `.wasm` / SW scripts, and path rewriting can prevent full proxy functionality.
-
-**This project detects the environment and surfaces a clear error instead of pretending the proxy works.**
-
-For reliable Scramjet:
-
-1. Prefer GitHub Pages, Cloudflare Pages, Netlify, or Vercel (same origin as your static files)
-2. Or self-host with any static server over HTTPS / localhost
-
-UI, CSS, JS, and assets still load correctly from jsDelivr; only the proxy layer may be restricted by browser/CDN rules.
-
-## Run locally
-
-```sh
-# any static server
-python3 -m http.server 3000
-# or
-npx serve .
-# or
-bunx serve .
-```
-
-Open `http://localhost:3000`. Service workers require a secure context (HTTPS or localhost).
-
-## Deploy
-
-Copy the entire folder (including `scramjet/`, `controller/`, `sw.js`, `assets/`) to your static host. No build step.
-
-### Structure
-
-```
-index.html
-sw.js
-assets/
-  styles.css
-  app.js
-controller/          # Scramjet controller (vendored)
-scramjet/
-  scramjet.js
-  scramjet.wasm
-```
-
-## Attribution
-
-- [Mercury Workshop / Scramjet](https://github.com/MercuryWorkshop/scramjet)
-- [x8rr/scramjet-templates](https://github.com/x8rr/scramjet-templates)
-- Inspired by [Cherri](https://github.com/x8rr/cherri)
-
-This proxy does **not** provide anonymity. Use responsibly.
-
-## License
-
-AGPL-3.0 (consistent with Scramjet templates / Cherri lineage where applicable). Scramjet itself follows its upstream license.
+- [Scramjet](https://github.com/MercuryWorkshop/scramjet) — Mercury Workshop
+- [Lunar v2](https://github.com/lunar-proxy/lunar-v2) — reference for server + Wisp architecture
+- [Cherri](https://github.com/x8rr/cherri) / [scramjet-templates](https://github.com/x8rr/scramjet-templates)

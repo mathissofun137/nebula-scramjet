@@ -171,17 +171,55 @@
   let scramjetReady = false;
   let scramjetError = null;
 
+  // Public Wisp servers are unreliable. Prefer same-origin /w/ when Nebula is
+  // run via `npm start` (local Wisp). This is how Lunar achieves site coverage.
   const WISP_FALLBACKS = [
     'wss://wisp.mercurywork.shop/',
     'wss://wisp.nebulaservices.org/',
     'wss://wisp.wispcraft.uk/'
   ];
 
+  function getLocalWispUrl() {
+    // When hosted on GitHub Pages there is no local Wisp.
+    // When run via server/index.js, /w/ is available on this origin.
+    if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      return proto + '//' + location.host + '/w/';
+    }
+    // Detect self-hosted Nebula (has /api/nebula) — async check fills this later
+    if (window.__NEBULA_LOCAL_WISP__) return window.__NEBULA_LOCAL_WISP__;
+    return null;
+  }
+
   function getWispUrl() {
     if (settings.wisp === 'custom' && settings.customWisp) {
       return settings.customWisp.trim();
     }
-    return settings.wisp || WISP_FALLBACKS[0];
+    if (settings.wisp === 'local' || settings.wisp === 'auto') {
+      return getLocalWispUrl() || WISP_FALLBACKS[0];
+    }
+    // Default: try local first if known, else configured / public
+    const local = getLocalWispUrl();
+    if (local && (!settings.wisp || settings.wisp === 'wss://wisp.mercurywork.shop/')) {
+      // Prefer local when available unless user explicitly picked another public server
+      if (!settings._userPickedPublicWisp) return local;
+    }
+    return settings.wisp || local || WISP_FALLBACKS[0];
+  }
+
+  async function detectLocalWisp() {
+    try {
+      const r = await fetch(new URL('/api/nebula', location.href).href, { cache: 'no-store' });
+      if (!r.ok) return null;
+      const j = await r.json();
+      if (j && j.wisp) {
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const path = j.wispPath || '/w/';
+        window.__NEBULA_LOCAL_WISP__ = proto + '//' + location.host + path;
+        return window.__NEBULA_LOCAL_WISP__;
+      }
+    } catch (_) {}
+    return null;
   }
 
   async function createTransport(kind, wispUrl) {
@@ -683,7 +721,7 @@
     if (be) be.value = settings.backend || 'scramjet';
     if (tr) tr.value = settings.transport || 'epoxy';
     if (wi) {
-      const known = ['wss://wisp.mercurywork.shop/', 'wss://wisp.nebulaservices.org/', 'wss://wisp.wispcraft.uk/'];
+      const known = ['local', 'wss://wisp.mercurywork.shop/', 'wss://wisp.nebulaservices.org/', 'wss://wisp.wispcraft.uk/'];
       if (settings.wisp === 'custom' || (settings.wisp && !known.includes(settings.wisp))) {
         wi.value = 'custom';
         if (row) row.style.display = '';
@@ -781,6 +819,7 @@
   });
   on('settingWisp', 'change', e => {
     settings.wisp = e.target.value;
+    settings._userPickedPublicWisp = e.target.value !== 'local' && e.target.value !== 'auto';
     const row = document.getElementById('customWispRow');
     if (row) row.style.display = e.target.value === 'custom' ? '' : 'none';
     if (e.target.value !== 'custom') {
@@ -813,5 +852,17 @@
   } catch (e) {
     console.error('[nebula] boot UI error', e);
   }
-  initScramjet().catch(e => console.error('[nebula] scramjet init', e));
+  (async () => {
+    try {
+      const local = await detectLocalWisp();
+      if (local) {
+        console.log('[nebula] local Wisp detected:', local);
+        // Prefer local automatically for best site compatibility
+        if (!settings._userPickedPublicWisp) {
+          settings.wisp = 'local';
+        }
+      }
+    } catch (_) {}
+    await initScramjet().catch(e => console.error('[nebula] scramjet init', e));
+  })();
 })();

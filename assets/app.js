@@ -74,7 +74,7 @@
   }
 
   function escapeHtml(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    return String(s).replace(/&/g,'&').replace(/</g,'<').replace(/>/g,'>').replace(/"/g,'"');
   }
   function escapeAttr(s) { return escapeHtml(s).replace(/'/g, '&#39;'); }
 
@@ -318,6 +318,13 @@
       const basePath = new URL('.', location.href).pathname;
       const sjPrefix = basePath + '~/sj/';
 
+      // Base path for GitHub Pages project sites, subfolders, etc.
+      // e.g. https://user.github.io/nebula-scramjet/ → "/nebula-scramjet/"
+      const basePath = new URL('.', location.href).pathname;
+      // Scramjet proxy prefix MUST stay under the SW scope (same base path).
+      // Default "/~/sj/" would hit github.io/~/sj/ and 404 on project Pages.
+      const sjPrefix = basePath + '~/sj/';
+
       const cfg = Object.assign({}, defaultConfig, {
         scramjetPath: new URL('scramjet/scramjet.js', location.href).href,
         wasmPath: new URL('scramjet/scramjet.wasm', location.href).href,
@@ -328,6 +335,7 @@
         serviceworker,
         transport,
         scramjetConfig: cfg,
+        // Override default prefix "/~/sj/" so it lives under the deployment base path
         config: { prefix: sjPrefix }
       });
       await scramjet.wait();

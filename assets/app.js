@@ -250,21 +250,49 @@
     return t;
   }
 
+  function isTlsError(e) {
+    const msg = String(e && (e.message || e.stack || e));
+    return /tls handshake|UnexpectedEof|Hyper client|Connect|ssl|EOF/i.test(msg);
+  }
+
   async function createTransportWithFailover(kind) {
+    const preferred = kind || settings.transport || 'epoxy';
+    // On TLS failures Epoxy/Hyper often fails; Libcurl handles many sites better.
+    const kinds = preferred === 'libcurl'
+      ? ['libcurl', 'epoxy']
+      : ['epoxy', 'libcurl'];
+
     const primary = getWispUrl();
-    const list = [primary, ...WISP_FALLBACKS.filter(w => w !== primary)];
+    const local = getLocalWispUrl();
+    const list = [];
+    if (local) list.push(local);
+    if (primary && !list.includes(primary)) list.push(primary);
+    for (const w of WISP_FALLBACKS) {
+      if (!list.includes(w)) list.push(w);
+    }
+
     let lastErr = null;
-    for (const wisp of list) {
-      try {
-        const t = await createTransport(kind, wisp);
-        console.log('[nebula] transport ready via', kind, wisp);
-        return { transport: t, wisp };
-      } catch (e) {
-        console.warn('[nebula] transport failed', kind, wisp, e);
-        lastErr = e;
+    for (const k of kinds) {
+      for (const wisp of list) {
+        try {
+          const t = await createTransport(k, wisp);
+          console.log('[nebula] transport ready via', k, wisp);
+          // Remember what worked so settings UI stays accurate
+          settings.transport = k;
+          if (wisp === local) settings.wisp = 'local';
+          return { transport: t, wisp, kind: k };
+        } catch (e) {
+          console.warn('[nebula] transport failed', k, wisp, e);
+          lastErr = e;
+        }
       }
     }
-    throw lastErr || new Error('All Wisp endpoints failed (TLS/connect).');
+    const hint = isTlsError(lastErr)
+      ? ' TLS handshake failed. Run `npm start` for local Wisp, or try Libcurl + another Wisp in Settings.'
+      : '';
+    throw lastErr
+      ? new Error(String(lastErr.message || lastErr) + hint)
+      : new Error('All transports/Wisp endpoints failed.' + hint);
   }
 
   function setupUltravioletConfig() {
@@ -542,8 +570,25 @@
   }
 
   async function navigateWithScramjet(tab, url) {
+    if (!scramjetReady || !scramjet) {
+      throw new Error('Scramjet is not ready. Open Settings → set Transport to Libcurl, Wisp to Local if possible, then Reconnect.');
+    }
     if (!tab.frame) tab.frame = scramjet.createFrame(tab.iframe);
-    tab.frame.go(url);
+    try {
+      tab.frame.go(url);
+    } catch (e) {
+      if (isTlsError(e) && settings.transport !== 'libcurl') {
+        console.warn('[nebula] TLS on navigate — switching to Libcurl and retrying');
+        settings.transport = 'libcurl';
+        saveSettings();
+        await reconnectTransport();
+        if (!scramjetReady) throw e;
+        tab.frame = scramjet.createFrame(tab.iframe);
+        tab.frame.go(url);
+      } else {
+        throw e;
+      }
+    }
     tab.backend = 'scramjet';
   }
 
@@ -613,9 +658,21 @@
       const msg = String(e.stack || e.message || e);
       if (/tls handshake|UnexpectedEof|Hyper client/i.test(msg)) {
         showError(
-          'Connection failed (TLS handshake). Try Settings → Transport: Libcurl, or change Wisp server, then Reconnect.',
+          'TLS handshake failed (common on public Wisp + sites like TikTok). Fix: run `npm start` for local Wisp, or Settings → Transport: Libcurl, Wisp: Local, then Reconnect.',
           msg
         );
+        // One automatic recovery attempt if still on epoxy
+        if (settings.transport !== 'libcurl') {
+          settings.transport = 'libcurl';
+          saveSettings();
+          reconnectTransport().then(() => {
+            const statusEl = document.getElementById('swStatus');
+            if (statusEl) {
+              statusEl.textContent = 'Switched to Libcurl — retry the page';
+              statusEl.className = 'sw-status visible ok';
+            }
+          });
+        }
       } else {
         showError('Unable to load this page.', msg);
       }
